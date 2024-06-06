@@ -3,7 +3,6 @@ import numpy as np
 import ctypes
 import msvcrt
 import pyaudio
-import math
 
 class HeliosPoint(ctypes.Structure):
     _fields_ = [('x', ctypes.c_uint16),
@@ -16,11 +15,8 @@ class HeliosPoint(ctypes.Structure):
 def to_12bit(value):
     return max(0, min(4095, int((value + 32768) * 4095 / 65535)))
 
-def calculate_distance(x1, y1, x2, y2):
-    return math.sqrt((x1 - x2)**2 + (y1 - y2)**2)
-
-def play_oscilloscope_music(file_path, enable_laser_off=False):
-    print('Wizualizacja w toku, nacisnij x aby przerwac')
+def play_oscilloscope_music(file_path):
+    print('Visualization in progress, press x to stop')
     with wave.open(file_path, 'r') as wav_file:
         frame_rate = wav_file.getframerate()
         n_channels, sampwidth = wav_file.getnchannels(), wav_file.getsampwidth()
@@ -41,38 +37,22 @@ def play_oscilloscope_music(file_path, enable_laser_off=False):
     HeliosLib = ctypes.cdll.LoadLibrary("./HeliosLaserDAC.dll")
     numDevices = HeliosLib.OpenDevices()
 
-    prev_x, prev_y = 0, 0  # Inicjalizacja poprzednich wartości
-    change_color = False  # Zmienna pomocnicza do śledzenia, czy zmienić kolor poprzedniego punktu
-
     for i in range(0, len(samples), batch_size):
         frame = frameType()
         audio_frame = samples[i:i+batch_size]
 
         for j in range(len(audio_frame)):
             x, y = to_12bit(audio_frame[j][0]), 4095 - to_12bit(audio_frame[j][1])
-            distance = calculate_distance(x, y, prev_x, prev_y) if j > 0 else 0
-
-            if enable_laser_off and distance > 300:
-                if j > 0:  # Jeśli nie jest to pierwszy punkt w partii
-                    frame[j-1] = HeliosPoint(prev_x, prev_y, 0, 0, 0, 0)  # Ustaw kolor poprzedniego punktu na 0
-                change_color = True  # Oznacz aktualny punkt do zmiany koloru
-            else:
-                change_color = False
-
-            if change_color:
-                frame[j] = HeliosPoint(x, y, 0, 0, 0, 0)  # Ustaw kolor aktualnego punktu na 0
-            else:
-                frame[j] = HeliosPoint(x, y, 255, 255, 255, 0)  # Domyślny kolor
-
-            prev_x, prev_y = x, y  # Aktualizacja poprzednich wartości
-
-        stream.write(audio_frame.tobytes())
+            frame[j] = HeliosPoint(x, y, 255, 255, 255, 0)
 
         for j in range(numDevices):
             HeliosLib.SetShutter(j, True)
             while HeliosLib.GetStatus(j) == 0:
                 pass
-            HeliosLib.WriteFrame(j, ctypes.c_uint(frame_rate + 6), ctypes.c_ubyte(0), ctypes.pointer(frame), ctypes.c_uint(len(audio_frame)))
+
+            HeliosLib.WriteFrame(j, ctypes.c_uint(frame_rate), ctypes.c_ubyte(0), ctypes.pointer(frame), ctypes.c_uint(len(audio_frame)))
+
+        stream.write(audio_frame.tobytes())
 
         if msvcrt.kbhit():
             key = msvcrt.getch()
